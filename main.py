@@ -1,106 +1,111 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sqlite3
-import hashlib
-import os
+import random
 
 app = FastAPI()
 
-# Password Security: Hashing a password
-def hash_password(password: str) -> str:
-    salt = os.urandom(32)
-    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
-    return salt.hex() + ":" + pwd_hash.hex()
+# 🚨 FIXES THE ADD ITEM BUG: Allows your frontend to communicate with your cloud backend!
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Allows connections from any browser window
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Password Security: Verifying a password
-def verify_password(stored_password: str, provided_password: str) -> bool:
-    salt_hex, hash_hex = stored_password.split(":")
-    salt = bytes.fromhex(salt_hex)
-    pwd_hash = hashlib.pbkdf2_hmac('sha256', provided_password.encode('utf-8'), salt, 100000)
-    return pwd_hash.hex() == hash_hex
-
-
-# --- REQUEST BODIES ---
-class UserAuth(BaseModel):
-    username: str
-    password: str
+DB_PATH = "database.db"
 
 class ClothingItem(BaseModel):
     user_id: int
-    image_url: str = "https://placeholder.com/cloth.jpg"  # Default placeholder for now
-    category: str  # e.g., "Top", "Bottom", "Shoes", "Outerwear"
-    color: str     # e.g., "Black", "White", "Navy"
-    formality: int # 1 = Casual, 2 = Smart Casual, 3 = Formal
-    weather_tags: str # e.g., "Summer,Spring"
-
-
-# --- AUTH ENDPOINTS ---
+    category: str
+    color: str
+    formality: int
+    weather_tags: str
+    image_url: str = "https://placeholder.com/cloth.jpg"
 
 @app.get("/")
 def home():
-    return {"message": "Welcome to the Wardrobe AI Backend API!"}
+    return {"status": "Wardrobe AI Engine Online"}
 
-@app.post("/register")
-def register_user(user: UserAuth):
-    conn = sqlite3.connect("database.db")
+@app.post("/clothes/add")
+def add_clothing(item: ClothingItem):
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    hashed_pwd = hash_password(user.password)
     try:
-        cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (user.username, hashed_pwd))
+        cursor.execute("""
+            INSERT INTO clothes (user_id, category, color, formality, weather_tags, image_url)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (item.user_id, item.category, item.color, item.formality, item.weather_tags, item.image_url))
         conn.commit()
-        return {"status": "success", "message": f"User '{user.username}' created successfully!"}
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=400, detail="Username already exists.")
+        return {"message": "Item added successfully to cloud wardrobe!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
 
-@app.post("/login")
-def login_user(user: UserAuth):
-    conn = sqlite3.connect("database.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, password_hash FROM users WHERE username = ?", (user.username,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    if not row or not verify_password(row[1], user.password):
-        raise HTTPException(status_code=400, detail="Incorrect username or password.")
-        
-    return {"status": "success", "message": "Login successful!", "user_id": row[0], "username": user.username}
-
-
-# --- CLOSET ENDPOINTS ---
-
-@app.post("/clothes/add")
-def add_clothing_item(item: ClothingItem):
-    conn = sqlite3.connect("database.db")
-    cursor = conn.cursor()
-    
-    # Check if user exists first
-    cursor.execute("SELECT id FROM users WHERE id = ?", (item.user_id,))
-    if not cursor.fetchone():
-        conn.close()
-        raise HTTPException(status_code=404, detail="User not found.")
-
-    cursor.execute("""
-        INSERT INTO clothes (user_id, image_url, category, color, formality, weather_tags)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (item.user_id, item.image_url, item.category, item.color, item.formality, item.weather_tags))
-    
-    conn.commit()
-    conn.close()
-    return {"status": "success", "message": f"{item.color} {item.category} added to your closet!"}
-
 @app.get("/clothes/{user_id}")
-def get_user_closet(user_id: int):
-    conn = sqlite3.connect("database.db")
-    # This magic line formats our database results into clean Python dictionaries
-    conn.row_factory = sqlite3.Row 
+def get_closet(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    
     cursor.execute("SELECT * FROM clothes WHERE user_id = ?", (user_id,))
     rows = cursor.fetchall()
     conn.close()
     
-    # Convert database rows to a clean list to send to the frontend
     closet = [dict(row) for row in rows]
-    return {"user_id": user_id, "total_items": len(closet), "closet": closet}
+    return {"total_items": len(closet), "closet": closet}
+
+# ==================== 🧠 UNIQUE AI RECOMMENDATION ENGINE ====================
+@app.get("/outfit/generate/{user_id}")
+def generate_outfit(user_id: int, occasion: str, weather: str):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM clothes WHERE user_id = ?", (user_id,))
+    all_items = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    if not all_items:
+        raise HTTPException(status_code=400, detail="Closet is empty. Add items first!")
+
+    # Convert formality string values to logic mapping
+    formality_map = {"Casual": 1, "Work": 2, "Date Night": 2, "Meeting": 3}
+    target_formality = formality_map.get(occasion, 1)
+
+    # Filter items by category
+    tops = [i for i in all_items if i['category'] == 'Top']
+    bottoms = [i for i in all_items if i['category'] == 'Bottom']
+    shoes = [i for i in all_items if i['category'] == 'Shoes']
+    outerwear = [i for i in all_items if i['category'] == 'Outerwear']
+
+    # AI Match Score scoring mechanism
+    def calculate_match_score(item):
+        score = 70 # Base structural score
+        if item['formality'] == target_formality: score += 15
+        if weather.lower() in item['weather_tags'].lower(): score += 15
+        return min(score, 100)
+
+    # Build recommendations
+    outfits = []
+    
+    # Generate up to 3 variations based on available inventory
+    for rotation in range(3):
+        if not tops or not bottoms: break
+        
+        selected_top = random.choice(tops)
+        selected_bottom = random.choice(bottoms)
+        selected_shoe = random.choice(shoes) if shoes else {"category": "Shoes", "color": "Default", "weather_tags": "All", "image_url": ""}
+        
+        avg_score = int((calculate_match_score(selected_top) + calculate_match_score(selected_bottom)) / 2)
+
+        outfits.append({
+            "title": f"{weather} {occasion} Fit Combo #{rotation + 1}",
+            "match_score": avg_score,
+            "occasion": occasion,
+            "weather": weather,
+            "items": [selected_top, selected_bottom, selected_shoe]
+        })
+
+    return {"outfits": outfits}
