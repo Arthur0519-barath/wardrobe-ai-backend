@@ -47,12 +47,12 @@ def create_access_token(data: dict, expires_delta: timedelta = timedelta(hours=2
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, "SUPER_SECRET_KEY_123", algorithm="HS256")
 
-# Database structural setup
+# Database structural setup - Upgraded to users_v2 to wipe old missing columns
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE IF NOT EXISTS users_v2 (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
@@ -77,7 +77,7 @@ def register_user(user: UserRegister):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT id FROM users WHERE username = ?", (user.username,))
+    cursor.execute("SELECT id FROM users_v2 WHERE username = ?", (user.username,))
     if cursor.fetchone():
         conn.close()
         raise HTTPException(status_code=400, detail="Username already registered")
@@ -86,7 +86,7 @@ def register_user(user: UserRegister):
     
     try:
         cursor.execute("""
-            INSERT INTO users (username, password_hash, height, weight, skin_tone, body_proportions)
+            INSERT INTO users_v2 (username, password_hash, height, weight, skin_tone, body_proportions)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (user.username, hashed_password, user.height, user.weight, user.skin_tone, user.body_proportions))
         conn.commit()
@@ -104,7 +104,7 @@ def login_user(user: UserLogin):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT id, password_hash, height, weight, skin_tone, body_proportions FROM users WHERE username = ?", (user.username,))
+    cursor.execute("SELECT id, password_hash, height, weight, skin_tone, body_proportions FROM users_v2 WHERE username = ?", (user.username,))
     result = cursor.fetchone()
     conn.close()
     
