@@ -9,6 +9,7 @@ import datetime
 
 app = FastAPI()
 
+# 🔑 CORS Middleware enables secure communication between frontend and backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,8 +22,10 @@ DB_PATH = "database.db"
 SECRET_KEY = "SUPER_SECRET_WARDROBE_KEY_DONT_SHARE"
 ALGORITHM = "HS256"
 
+# Cryptographic helper for secure hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# Automatically build local database structure if it doesn't exist
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -55,6 +58,7 @@ def init_db():
 
 init_db()
 
+# Data Structure Definitions
 class UserRegister(BaseModel):
     username: str
     password: str
@@ -74,6 +78,12 @@ class ClothingItem(BaseModel):
     formality: int
     weather_tags: str
     image_url: str
+
+# --- ENDPOINTS ---
+
+@app.get("/")
+def home():
+    return {"status": "online", "message": "Wardrobe AI Engine is Running"}
 
 @app.post("/auth/register")
 def register_user(user: UserRegister):
