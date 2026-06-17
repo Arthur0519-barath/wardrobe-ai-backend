@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Enable CORS universally so your local index.html file can talk to Render
+# Enable CORS universally for your local frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,7 +20,7 @@ app.add_middleware(
 
 DB_PATH = "database.db"
 
-# Flexible schemas accepting text strings for physical metrics
+# Updated schema to include hair_color
 class UserRegister(BaseModel):
     username: str
     password: str
@@ -28,6 +28,7 @@ class UserRegister(BaseModel):
     weight: str
     skin_tone: str
     body_proportions: str
+    hair_color: str  # <-- Added Hair Color
 
 class UserLogin(BaseModel):
     username: str
@@ -47,12 +48,12 @@ def create_access_token(data: dict, expires_delta: timedelta = timedelta(hours=2
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, "SUPER_SECRET_KEY_123", algorithm="HS256")
 
-# Database structural setup - Upgraded to users_v2 to wipe old missing columns
+# Database structural setup - Upgraded to users_v3 to support hair_color safely
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users_v2 (
+        CREATE TABLE IF NOT EXISTS users_v3 (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
@@ -60,6 +61,7 @@ def init_db():
             weight TEXT,
             skin_tone TEXT,
             body_proportions TEXT,
+            hair_color TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -77,7 +79,7 @@ def register_user(user: UserRegister):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT id FROM users_v2 WHERE username = ?", (user.username,))
+    cursor.execute("SELECT id FROM users_v3 WHERE username = ?", (user.username,))
     if cursor.fetchone():
         conn.close()
         raise HTTPException(status_code=400, detail="Username already registered")
@@ -86,9 +88,9 @@ def register_user(user: UserRegister):
     
     try:
         cursor.execute("""
-            INSERT INTO users_v2 (username, password_hash, height, weight, skin_tone, body_proportions)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user.username, hashed_password, user.height, user.weight, user.skin_tone, user.body_proportions))
+            INSERT INTO users_v3 (username, password_hash, height, weight, skin_tone, body_proportions, hair_color)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (user.username, hashed_password, user.height, user.weight, user.skin_tone, user.body_proportions, user.hair_color))
         conn.commit()
     except Exception as e:
         conn.close()
@@ -104,7 +106,7 @@ def login_user(user: UserLogin):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT id, password_hash, height, weight, skin_tone, body_proportions FROM users_v2 WHERE username = ?", (user.username,))
+    cursor.execute("SELECT id, password_hash, height, weight, skin_tone, body_proportions, hair_color FROM users_v3 WHERE username = ?", (user.username,))
     result = cursor.fetchone()
     conn.close()
     
@@ -121,6 +123,7 @@ def login_user(user: UserLogin):
             "height": result[2],
             "weight": result[3],
             "skin_tone": result[4],
-            "body_proportions": result[5]
+            "body_proportions": result[5],
+            "hair_color": result[6]
         }
     }
