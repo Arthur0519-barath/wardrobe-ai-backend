@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Enable CORS universally for your local frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,15 +19,15 @@ app.add_middleware(
 
 DB_PATH = "database.db"
 
-# Updated schema to include hair_color
 class UserRegister(BaseModel):
     username: str
     password: str
+    age: str          # <-- Added Age Field
     height: str
     weight: str
     skin_tone: str
     body_proportions: str
-    hair_color: str  # <-- Added Hair Color
+    hair_color: str
 
 class UserLogin(BaseModel):
     username: str
@@ -48,15 +47,15 @@ def create_access_token(data: dict, expires_delta: timedelta = timedelta(hours=2
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, "SUPER_SECRET_KEY_123", algorithm="HS256")
 
-# Database structural setup - Upgraded to users_v3 to support hair_color safely
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users_v3 (
+        CREATE TABLE IF NOT EXISTS users_v4 (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
+            age TEXT,
             height TEXT,
             weight TEXT,
             skin_tone TEXT,
@@ -72,14 +71,14 @@ init_db()
 
 @app.get("/")
 def home():
-    return {"status": "online", "message": "Wardrobe AI Engine is Running"}
+    return {"status": "online", "message": "Wardrobe AI Engine V4 Live"}
 
 @app.post("/auth/register")
 def register_user(user: UserRegister):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT id FROM users_v3 WHERE username = ?", (user.username,))
+    cursor.execute("SELECT id FROM users_v4 WHERE username = ?", (user.username,))
     if cursor.fetchone():
         conn.close()
         raise HTTPException(status_code=400, detail="Username already registered")
@@ -88,25 +87,24 @@ def register_user(user: UserRegister):
     
     try:
         cursor.execute("""
-            INSERT INTO users_v3 (username, password_hash, height, weight, skin_tone, body_proportions, hair_color)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (user.username, hashed_password, user.height, user.weight, user.skin_tone, user.body_proportions, user.hair_color))
+            INSERT INTO users_v4 (username, password_hash, age, height, weight, skin_tone, body_proportions, hair_color)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user.username, hashed_password, user.age, user.height, user.weight, user.skin_tone, user.body_proportions, user.hair_color))
         conn.commit()
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
         
     conn.close()
-    
     token = create_access_token({"sub": user.username})
-    return {"message": "Vault profile created successfully", "token": token, "username": user.username}
+    return {"message": "Vault created successfully", "token": token, "username": user.username}
 
 @app.post("/auth/login")
 def login_user(user: UserLogin):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT id, password_hash, height, weight, skin_tone, body_proportions, hair_color FROM users_v3 WHERE username = ?", (user.username,))
+    cursor.execute("SELECT id, password_hash, age, height, weight, skin_tone, body_proportions, hair_color FROM users_v4 WHERE username = ?", (user.username,))
     result = cursor.fetchone()
     conn.close()
     
@@ -115,15 +113,15 @@ def login_user(user: UserLogin):
         
     token = create_access_token({"sub": user.username})
     return {
-        "message": "Welcome back to your vault", 
+        "message": "Welcome back", 
         "token": token, 
-        "user_id": result[0],
         "username": user.username,
         "profile": {
-            "height": result[2],
-            "weight": result[3],
-            "skin_tone": result[4],
-            "body_proportions": result[5],
-            "hair_color": result[6]
+            "age": result[2],
+            "height": result[3],
+            "weight": result[4],
+            "skin_tone": result[5],
+            "body_proportions": result[6],
+            "hair_color": result[7]
         }
     }
