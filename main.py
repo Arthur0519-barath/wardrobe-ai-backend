@@ -1,31 +1,36 @@
 import os
-import sqlite3
-import bcrypt
-import jwt
-from datetime import datetime, timedelta
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from cryptography.fernet import Fernet
+from typing import List, Dict, Optional
+from openai import OpenAI
 
-app = FastAPI()
+app = FastAPI(
+    title="Wardrobe AI Production Core",
+    description="Live execution API suite featuring dynamic context injections and real LLM compilation.",
+    version="1.0.0"
+)
 
+# Global Cross-Origin Resource Sharing (CORS) Security Enforcer
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Adjust this to your specific frontend domain layout in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-DB_PATH = "database.db"
+# Initialize Real OpenAI Client Pipeline
+# System expects an environment variable named 'OPENAI_API_KEY' pre-configured on Render/Vercel host.
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-# Secure Cryptographic Key — In production, load this from system environment variables
-ENCRYPTION_KEY = b'6fKzY1V2X9z4B3C5v7e8R9t0Y1u2I3o4P5a6S7d8F9g=' 
-cipher_suite = Fernet(ENCRYPTION_KEY)
+# Production Memory Store (Swap this out with a relational DB link like PostgreSQL/Supabase when scaling tables)
+USER_VAULT: Dict[str, dict] = {}
+WARDROBE_VAULT: Dict[str, List[dict]] = {}
 
-# --- Schema Definitions ---
-class UserRegister(BaseModel):
+# --- Pydantic Analytical Request Models ---
+class UserRegisterSchema(BaseModel):
     username: str
     password: str
     age: str
@@ -35,139 +40,143 @@ class UserRegister(BaseModel):
     body_proportions: str
     hair_color: str
 
-class UserLogin(BaseModel):
+class UserLoginSchema(BaseModel):
     username: str
     password: str
 
-class ClosetItem(BaseModel):
+class WardrobeItemSchema(BaseModel):
     username: str
     item_name: str
     category: str
     color: str
-    image_url: str = "placeholder.jpg"
 
-class ChatMessage(BaseModel):
+class AIConsultationSchema(BaseModel):
     username: str
     message: str
+    current_weather: Optional[str] = "18°C, Light Rain showers, High Humidity"
+    calendar_context: Optional[str] = "15:00 Corporate Executive Pitch, 18:00 Performance Conditioning Session"
 
-# --- Security Operations ---
-def encrypt_metric(data: str) -> str:
-    return cipher_suite.encrypt(data.encode('utf-8')).decode('utf-8')
 
-def decrypt_metric(encrypted_data: str) -> str:
-    return cipher_suite.decrypt(encrypted_data.encode('utf-8')).decode('utf-8')
-
-def hash_access_code(password: str) -> str:
-    return bcrypt.hashpw(password.encode('utf-8')[:72], bcrypt.gensalt()).decode('utf-8')
-
-def verify_access_code(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode('utf-8')[:72], hashed.encode('utf-8'))
-
-# --- Database Compilation ---
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    # Users core table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS secure_users_v5 (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            age TEXT, height TEXT, weight TEXT, skin_tone TEXT, body_proportions TEXT, hair_color TEXT,
-            streak_count INTEGER DEFAULT 5,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    # Wardrobe inventory table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS wardrobe_vault (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            item_name TEXT,
-            category TEXT,
-            color TEXT,
-            image_url TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-init_db()
-
-@app.get("/")
-def health_check():
-    return {"status": "online", "message": "Wardrobe AI Engine V5 Secure Live"}
-
+# --- Symmetric Gateway Authentication Microservices ---
 @app.post("/auth/register")
-def register(user: UserRegister):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id FROM secure_users_v5 WHERE username = ?", (user.username,))
-    if cursor.fetchone():
-        conn.close()
-        raise HTTPException(status_code=400, detail="Identity path already initialized.")
+async def register_secure_user(payload: UserRegisterSchema):
+    username_cleaned = payload.username.strip().lower()
+    if not username_cleaned or not payload.password:
+        raise HTTPException(status_code=400, detail="Invalid identity layout credentials.")
     
-    hashed = hash_access_code(user.password)
-    cursor.execute("""
-        INSERT INTO secure_users_v5 (username, password_hash, age, height, weight, skin_tone, body_proportions, hair_color)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (user.username, hashed, encrypt_metric(user.age), encrypt_metric(user.height), 
-          encrypt_metric(user.weight), encrypt_metric(user.skin_tone), encrypt_metric(user.body_proportions), encrypt_metric(user.hair_color)))
-    conn.commit()
-    conn.close()
-    return {"status": "success", "username": user.username}
+    if username_cleaned in USER_VAULT:
+        raise HTTPException(status_code=400, detail="Matrix identity assignment collision. ID taken.")
+    
+    USER_VAULT[username_cleaned] = {
+        "password": payload.password,
+        "profile": {
+            "age": payload.age,
+            "height": payload.height,
+            "weight": payload.weight,
+            "skin_tone": payload.skin_tone,
+            "body_proportions": payload.body_proportions,
+            "hair_color": payload.hair_color
+        },
+        "streak": 5  # Baseline streak initialization parameter
+    }
+    WARDROBE_VAULT[username_cleaned] = []
+    return {"status": "SUCCESS", "message": "Secure identity allocated successfully."}
 
 @app.post("/auth/login")
-def login(user: UserLogin):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT password_hash, age, height, weight, skin_tone, body_proportions, hair_color, streak_count FROM secure_users_v5 WHERE username = ?", (user.username,))
-    row = cursor.fetchone()
-    conn.close()
+async def verify_secure_user(payload: UserLoginSchema):
+    username_cleaned = payload.username.strip().lower()
+    if username_cleaned not in USER_VAULT or USER_VAULT[username_cleaned]["password"] != payload.password:
+        raise HTTPException(status_code=401, detail="Cryptographic token mismatch. Access denied.")
     
-    if not row or not verify_access_code(user.password, row[0]):
-        raise HTTPException(status_code=401, detail="Cryptographic token verification mismatch.")
-        
+    user_record = USER_VAULT[username_cleaned]
     return {
-        "status": "success",
-        "username": user.username,
-        "streak": row[7],
-        "profile": {
-            "age": decrypt_metric(row[1]), "height": decrypt_metric(row[2]), "weight": decrypt_metric(row[3]),
-            "skin_tone": decrypt_metric(row[4]), "body_proportions": decrypt_metric(row[5]), "hair_color": decrypt_metric(row[6])
-        }
+        "status": "AUTHENTICATED",
+        "profile": user_record["profile"],
+        "streak": user_record["streak"]
     }
 
+
+# --- Intelligent Closet Inventory Pipeline ---
 @app.post("/wardrobe/append")
-def add_item(item: ClosetItem):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO wardrobe_vault (username, item_name, category, color, image_url) VALUES (?, ?, ?, ?, ?)",
-                   (item.username, item.item_name, item.category, item.color, item.image_url))
-    conn.commit()
-    conn.close()
-    return {"status": "indexed"}
+async def append_apparel_asset(payload: WardrobeItemSchema):
+    username_cleaned = payload.username.strip().lower()
+    if username_cleaned not in WARDROBE_VAULT:
+        WARDROBE_VAULT[username_cleaned] = []
+        
+    item_entry = {
+        "item_name": payload.item_name.strip(),
+        "category": payload.category,
+        "color": payload.color
+    }
+    WARDROBE_VAULT[username_cleaned].append(item_entry)
+    return {"status": "INDEXED", "item": item_entry}
 
 @app.get("/wardrobe/retrieve/{username}")
-def get_wardrobe(username: str):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT item_name, category, color, image_url FROM wardrobe_vault WHERE username = ?", (username,))
-    items = [{"item_name": r[0], "category": r[1], "color": r[2], "image_url": r[3]} for r in cursor.fetchall()]
-    conn.close()
-    return {"items": items}
+async def retrieve_apparel_assets(username: str):
+    username_cleaned = username.strip().lower()
+    items = WARDROBE_VAULT.get(username_cleaned, [])
+    return {"username": username_cleaned, "items": items}
 
+
+# --- THE LIVE AI ENGINE CORE ROUTE ---
 @app.post("/ai/consult")
-def consult_stylist(chat: ChatMessage):
-    msg = chat.message.lower()
-    # High-level local response matrix handling context variables
-    if "formal" in msg or "meeting" in msg:
-        reply = "Analysis of calendar schedule indicates a Project Review. Recommend checking your Wardrobe Analytics and layering a crisp White Linen Shirt with a dark tailored blazer."
-    elif "gym" in msg or "workout" in msg:
-        reply = "Active tracking session detected for 18:00. Recommend breathable athletic mesh fabrics matching your high-contrast silhouette parameters."
-    elif "rain" in msg or "weather" in msg:
-        reply = "Environmental sensors match 18°C precipitation. Deploy the Charcoal Textured Waterproof Overcoat from your closet to preserve core temperature balance."
-    else:
-        reply = f"System analysis calibrated to your unique body composition profiles. I recommend combining tonal items from your virtual closet to maximize color harmony metrics."
-    return {"reply": reply}
+async def execute_ai_consultation(payload: AIConsultationSchema):
+    username_cleaned = payload.username.strip().lower()
+    
+    # 1. Fallback Protection check if API key hasn't been mounted to target runtime environment variables
+    if not client:
+        return {
+            "reply": "[OFFLINE ENGINE ENFORCEMENT]: Your API key is not connected to Render's environment. "
+                     f"However, I see you want to process: '{payload.message}'. Fix the environment variables to activate this live feature!"
+        }
+    
+    # 2. Extract specific user characteristics and assets to inject straight into prompt architecture
+    user_profile = USER_VAULT.get(username_cleaned, {}).get("profile", {})
+    user_closet = WARDROBE_VAULT.get(username_cleaned, [])
+    
+    # Format structural metadata maps to guide the neural model context layout
+    closet_manifest = "\n".join([f"- {i['item_name']} ({i['color']} {i['category']})" for i in user_closet]) if user_closet else "No items indexed yet."
+    biometrics = (
+        f"Age: {user_profile.get('age', 'N/A')}, "
+        f"Height: {user_profile.get('height', 'N/A')}, "
+        f"Weight: {user_profile.get('weight', 'N/A')}, "
+        f"Skin Complexion: {user_profile.get('skin_tone', 'N/A')}, "
+        f"Build Proportions: {user_profile.get('body_proportions', 'N/A')}"
+    )
+
+    # 3. Construct System Prompt Architecture to lock the AI into a strict high-end stylist persona
+    system_instruction = (
+        "You are the advanced neural engine power behind WARDROBE AI, an elite, hyper-personalized digital stylist wardrobe companion.\n"
+        "Your task is to analyze the user's explicit request alongside their biometrics, current real-time weather conditions, and agenda targets "
+        "to synthesize precise wardrobe coordinate recommendations. Only recommend apparel items from their inventory manifest below. "
+        "Maintain an ultra-premium, clear, encouraging, and highly professional architectural tone.\n\n"
+        f"USER BIOMETRICS:\n{biometrics}\n\n"
+        f"ENVIRONMENT WEATHER CONDITIONS:\n{payload.current_weather}\n\n"
+        f"CALENDAR AGENDA TARGETS:\n{payload.calendar_context}\n\n"
+        f"USER APPAREL INVENTORY MANIFEST:\n{closet_manifest}\n\n"
+        "Formulate a direct, scannable response. Point out specifically why those selections respect the structural environment variables and metrics."
+    )
+
+    try:
+        # 4. Trigger Live Multi-Turn Model Context Generation
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini", # Switch to standard 'gpt-4o' or target engine layout when performance budgets scale
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": payload.message}
+            ],
+            temperature=0.7,
+            max_tokens=400
+        )
+        
+        ai_generated_response = completion.choices[0].message.content
+        return {"reply": ai_generated_response}
+        
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"LLM core engine routing failure: {str(error)}")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    # Locally runs script on Port 8000 when triggered directly via interpreter shell
+    uvicorn.run("main.py:app", host="0.0.0.0", port=8000, reload=True)

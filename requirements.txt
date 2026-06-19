@@ -4,3 +4,5 @@ bcrypt
 pyjwt
 pydantic
 cryptography
+openai
+python-multipart
